@@ -1,0 +1,31 @@
+[Desktop Entry]
+Type=Service
+MimeType=image/*;
+Actions=resizeImages;rotateLeft;rotateRight;convertImages;
+X-KDE-Submenu=Image Tools
+X-KDE-Submenu[ro]=Instrumente imagini
+X-KDE-Priority=TopLevel
+
+[Desktop Action resizeImages]
+Name=Resize Images...
+Name[ro]=Redimensionează imaginile...
+Icon=transform-scale
+Exec=dolphin-image-converter --resize %U
+
+[Desktop Action rotateLeft]
+Name=Rotate Left 90°
+Name[ro]=Rotește la stânga 90°
+Icon=object-rotate-left
+Exec=dolphin-image-converter --rotate-left %U
+
+[Desktop Action rotateRight]
+Name=Rotate Right 90°
+Name[ro]=Rotește la dreapta 90°
+Icon=object-rotate-right
+Exec=dolphin-image-converter --rotate-right %U
+
+[Desktop Action convertImages]
+Name=Convert Images...
+Name[ro]=Convertește imaginile...
+Icon=image-x-generic
+Exec=dolphin-image-converter --convert %U
