@@ -84,6 +84,10 @@ Dolphin passes the selected URLs with `%U`. The Qt application converts `file://
 
 The first version intentionally uses a Service Menu instead of `KAbstractFileItemActionPlugin`. This keeps the Dolphin integration small and decouples it from KDE Frameworks APIs while retaining a native Qt interface.
 
+## Screenshot
+<img width="443" height="438" alt="Screenshot_20260812_142614" src="https://github.com/user-attachments/assets/041fb069-b2aa-4e6b-868f-576aae084210" />
+
+
 ## License
 
-GPL-2.0-or-later.
+GPL-3.0-or-later.
