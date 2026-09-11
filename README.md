@@ -1,4 +1,4 @@
-# Dolphin Image Converter 0.3.3
+# Dolphin Image Converter 0.4.5
 
 Batch image tools for KDE Dolphin, powered by Qt 6 and ImageMagick.
 
@@ -8,7 +8,7 @@ Batch image tools for KDE Dolphin, powered by Qt 6 and ImageMagick.
 ## Features
 
 - Resize by width, by height, or inside a width × height box while preserving aspect ratio.
-- Rotate 90° left or right.
+- Rotate 90° left or right, using EXIF metadata-only rotation for oriented JPEGs and lossless `jpegtran` transforms for compatible normal-orientation JPEGs.
 - Convert to WebP, AVIF, JPEG, or PNG.
 - Select a separate output folder for Resize or Convert.
 - Optional metadata removal.
@@ -45,10 +45,10 @@ The menu is restricted to the local `file` protocol. It is not offered for `smb:
 ```bash
 sudo pacman -S --needed \
   base-devel cmake qt6-base qt6-tools \
-  imagemagick libwebp libheif
+  imagemagick libjpeg-turbo libwebp libheif
 ```
 
-`qt6-tools` provides Qt LinguistTools used to build the embedded Romanian translation.
+`qt6-tools` provides Qt LinguistTools used to build the embedded Romanian translation. `libjpeg-turbo` provides `jpegtran`, used for normal-orientation JPEGs when a perfect lossless transform is possible.
 
 ImageMagick 7 must provide the `magick` executable. WebP and AVIF/HEIF support depends on the delegates enabled in the installed ImageMagick package. Before a batch starts, the application refuses optional output formats that ImageMagick reports as non-writable; this also prevents in-place HEIC/HEIF resize or rotation when the HEVC encoder is unavailable.
 
@@ -118,6 +118,25 @@ When "Remove EXIF and other metadata" is enabled, ImageMagick `-strip` also remo
 
 JPEG, normal PNG, and AVIF are treated as single-image output formats. When the source contains multiple frames/pages, such as an animated GIF or multi-page TIFF, only frame/page 0 is used for those outputs.
 
+
+## JPEG lossless rotation
+
+JPEG/JFIF rotation uses three processing paths, chosen automatically:
+
+1. The application parses EXIF Orientation itself and uses the same parser for both the decision and the metadata rewrite. A valid Orientation value is therefore interpreted consistently in both places.
+2. The XMP `tiff:Orientation` value is parsed as well as its presence. Missing XMP is represented as 0, valid values as 1–8, and an Orientation token that cannot be interpreted safely as -1. EXIF and XMP are compared before choosing a rotation path.
+3. If effective EXIF Orientation is normal (1, including a missing EXIF tag) and XMP is missing or also 1, `jpegtran -copy all -perfect -rotate 90/270` is used when available. This keeps common Photoshop/Lightroom JPEGs with EXIF=1 and XMP=1 on the lossless DCT path.
+4. If EXIF Orientation is 2–8 and XMP Orientation is absent or contains exactly one matching `tiff:Orientation` value, the requested 90° rotation is composed into the metadata only. EXIF is updated and, when present, the same new orientation is written to the single XMP ASCII digit. JPEG pixel data is not decoded, transformed, or recompressed. This is instantaneous, has no iMCU alignment restriction, and keeps the stored JPEG and embedded thumbnail data unchanged.
+5. If EXIF or XMP Orientation is malformed, or the two metadata sources disagree, the job takes the conservative ImageMagick path. If a perfect `jpegtran` transform is not possible, that job also falls back to ImageMagick. Re-encoded files are reported with a warning.
+
+If the metadata-only update unexpectedly cannot locate or safely rewrite the same valid Orientation metadata that was inspected earlier, the job falls back to ImageMagick rather than committing a questionable file. XMP is rewritten only when exactly one parseable `tiff:Orientation` value exists and it matches EXIF. All paths still use the same temporary-file staging and atomic commit logic.
+
+JPEG orientation inspection parses only the marker/header chain before the Start of Scan marker. File I/O starts with a 256 KiB prefix and falls back to reading the remainder only when that prefix does not contain the complete JPEG header chain. This avoids reading entire large JPEG files just to inspect EXIF/XMP metadata in the common case.
+
+If `jpegtran` is not installed, EXIF-oriented JPEGs can still use the metadata-only lossless path. Normal-orientation JPEGs continue to work through ImageMagick, but their requested rotation is then re-encoded. On Arch Linux, `jpegtran` is provided by `libjpeg-turbo`.
+
+For the `jpegtran` path, `-copy all` preserves embedded EXIF thumbnails as-is, so an embedded thumbnail may still show the pre-rotation orientation. `jpegtran` also does not update EXIF `PixelXDimension` / `PixelYDimension` after a 90° physical transform. These limitations do not apply to the metadata-only path because the stored pixel matrix is not changed.
+
 ## Parallel processing
 
 The default worker count is at most 4 and never exceeds the selected file count or the number of logical processors reported by Qt.
@@ -152,7 +171,6 @@ Canceling or closing an options dialog does not save changes. If the current sel
 
 ## Current limitations
 
-- Rotation still re-encodes JPEG through ImageMagick; lossless JPEG rotation with `jpegtran`/`exiftran` is not implemented.
 - The application is exposed through Dolphin and is not installed as a standalone desktop launcher.
 
 ## License

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "imageconverterdialog.h"
 #include "imagemagickrunner.h"
+#include "jpegorientation.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -23,6 +24,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QThread>
 #include <QUuid>
 #include <QVector>
@@ -178,7 +180,7 @@ void ImageConverterDialog::buildUi()
     const int maximumJobs = qMax(1, qMin(logicalProcessors, selectedFileCount));
     m_parallelJobs->setRange(1, maximumJobs);
     m_parallelJobs->setValue(qMin(4, maximumJobs));
-    m_parallelJobs->setToolTip(tr("Number of ImageMagick processes allowed to run at the same time."));
+    m_parallelJobs->setToolTip(tr("Number of image-processing jobs allowed to run at the same time."));
     processingLayout->addRow(tr("Parallel jobs:"), m_parallelJobs);
     layout->addWidget(processingBox);
 
@@ -282,6 +284,18 @@ void ImageConverterDialog::buildRotateOptions()
     auto *layout = new QVBoxLayout(box);
     const QString direction = m_mode == Mode::RotateLeft ? tr("90° counter-clockwise") : tr("90° clockwise");
     layout->addWidget(new QLabel(tr("Rotate each selected image %1.").arg(direction), box));
+
+    auto *jpegHint = new QLabel(box);
+    jpegHint->setWordWrap(true);
+    if (QStandardPaths::findExecutable(QStringLiteral("jpegtran")).isEmpty()) {
+        jpegHint->setText(tr("JPEG files with non-normal EXIF Orientation are rotated losslessly by updating metadata when XMP Orientation is absent or matches EXIF. "
+                             "For other JPEG files, jpegtran was not found, so ImageMagick will re-encode them."));
+    } else {
+        jpegHint->setText(tr("JPEG files with non-normal EXIF Orientation are rotated losslessly by updating metadata when XMP Orientation is absent or matches EXIF. "
+                             "Other JPEG files use jpegtran when possible and fall back to ImageMagick only when necessary."));
+    }
+    layout->addWidget(jpegHint);
+
     static_cast<QVBoxLayout *>(this->layout())->addWidget(box);
 }
 
@@ -679,6 +693,12 @@ static QString imageMagickFormatForPath(const QString &path)
     return suffix.toUpper();
 }
 
+static bool isJpegFile(const QString &path)
+{
+    QMimeDatabase database;
+    return database.mimeTypeForFile(path, QMimeDatabase::MatchContent).name() == QStringLiteral("image/jpeg");
+}
+
 void ImageConverterDialog::processImages()
 {
     if (m_runner)
@@ -980,6 +1000,16 @@ void ImageConverterDialog::processImages()
 
     QVector<ImageMagickJob> jobs;
     jobs.reserve(m_files.size());
+
+    const bool rotationMode = m_mode == Mode::RotateLeft || m_mode == Mode::RotateRight;
+    const QString magickProgram = ImageMagickRunner::executable();
+    const QString jpegtranProgram = rotationMode
+        ? QStandardPaths::findExecutable(QStringLiteral("jpegtran"))
+        : QString();
+
+    if (rotationMode)
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+
     for (const QString &input : m_files) {
         QString extension;
         if (m_mode == Mode::Convert)
@@ -993,9 +1023,53 @@ void ImageConverterDialog::processImages()
         job.input = input;
         job.finalOutput = finalOutput;
         job.temporaryOutput = temporaryOutput;
+        job.program = magickProgram;
         job.arguments = buildArguments(input, temporaryOutput);
+
+        if (rotationMode && isJpegFile(input)) {
+            const JpegOrientationInfo orientationInfo = inspectJpegOrientationFile(input);
+            const int exifOrientation = orientationInfo.orientation;
+            const int xmpOrientation = orientationInfo.xmpOrientation;
+            const int effectiveExifOrientation = exifOrientation == 0 ? 1 : exifOrientation;
+
+            if (exifOrientation < 0 || xmpOrientation < 0) {
+                job.successWarning = tr("JPEG Orientation metadata is malformed or unsupported; lossless rotation was skipped and the image was re-encoded with ImageMagick.");
+            } else if (xmpOrientation != 0 && xmpOrientation != effectiveExifOrientation) {
+                job.successWarning = tr("JPEG EXIF and XMP Orientation metadata disagree; lossless rotation was skipped and the image was re-encoded with ImageMagick.");
+            } else if (effectiveExifOrientation == 1 && !jpegtranProgram.isEmpty()) {
+                // Normal orientation, including the common EXIF=1 + XMP=1
+                // files written by Photoshop/Lightroom, is safe for jpegtran.
+                const QString angle = m_mode == Mode::RotateLeft
+                                    ? QStringLiteral("270")
+                                    : QStringLiteral("90");
+                job.program = jpegtranProgram;
+                job.arguments = {QStringLiteral("-copy"), QStringLiteral("all"),
+                                 QStringLiteral("-perfect"),
+                                 QStringLiteral("-rotate"), angle,
+                                 QStringLiteral("-outfile"), temporaryOutput,
+                                 input};
+                job.fallbackProgram = magickProgram;
+                job.fallbackArguments = buildArguments(input, temporaryOutput);
+                job.fallbackWarning = tr("Lossless JPEG rotation was not possible; the image was re-encoded with ImageMagick.");
+            } else if (effectiveExifOrientation >= 2 && effectiveExifOrientation <= 8
+                       && (xmpOrientation == 0 || xmpOrientation == effectiveExifOrientation)) {
+                // Detection and mutation use the same parser. Compose the requested
+                // 90° turn into EXIF Orientation and, when there is one matching XMP
+                // Orientation value, update that single ASCII digit as well. JPEG DCT
+                // coefficients are never touched.
+                job.metadataOnly = true;
+                job.metadataRotateClockwise = m_mode == Mode::RotateRight;
+                job.fallbackProgram = magickProgram;
+                job.fallbackArguments = buildArguments(input, temporaryOutput);
+                job.fallbackWarning = tr("Lossless JPEG orientation update was not possible; the image was re-encoded with ImageMagick.");
+            }
+        }
+
         jobs.push_back(std::move(job));
     }
+
+    if (rotationMode)
+        QApplication::restoreOverrideCursor();
 
     QStringList stagingDirectories;
     QSet<QString> seenStagingDirectories;

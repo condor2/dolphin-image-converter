@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(dolphin-image-converter
-    VERSION 0.3.3
+    VERSION 0.4.5
     DESCRIPTION "Batch image resize, rotate and conversion integration for KDE Dolphin"
     LANGUAGES CXX
 )
@@ -20,6 +20,8 @@ add_executable(dolphin-image-converter
     src/imageconverterdialog.h
     src/imagemagickrunner.cpp
     src/imagemagickrunner.h
+    src/jpegorientation.cpp
+    src/jpegorientation.h
 )
 
 target_link_libraries(dolphin-image-converter PRIVATE Qt6::Widgets)

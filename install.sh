@@ -85,6 +85,16 @@ if [[ -z "$MAGICK_VERSION" || "$MAGICK_VERSION" != *"ImageMagick 7"* ]]; then
 fi
 echo "Detected: $MAGICK_VERSION"
 
+if command -v jpegtran >/dev/null 2>&1; then
+    JPEGTRAN_VERSION="$(jpegtran -version 2>&1 | head -n1 || true)"
+    echo "Detected jpegtran: $(command -v jpegtran)${JPEGTRAN_VERSION:+ ($JPEGTRAN_VERSION)}"
+else
+    echo "Warning: jpegtran was not found. JPEG rotation will fall back to lossy ImageMagick re-encoding." >&2
+    if command -v pacman >/dev/null 2>&1; then
+        echo "Install lossless JPEG rotation support with: sudo pacman -S --needed libjpeg-turbo" >&2
+    fi
+fi
+
 MAGICK_TEST_DIR="$(mktemp -d)"
 BIN_BACKUP=""
 SERVICE_BACKUP=""

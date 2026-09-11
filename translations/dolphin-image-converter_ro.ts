@@ -283,8 +283,8 @@ Schimbă sufixul numelui sau alege alt folder de ieșire.</translation>
       <translation>Joburi paralele:</translation>
     </message>
     <message>
-      <source>Number of ImageMagick processes allowed to run at the same time.</source>
-      <translation>Numărul de procese ImageMagick care pot rula simultan.</translation>
+      <source>Number of image-processing jobs allowed to run at the same time.</source>
+      <translation>Numărul de joburi de procesare a imaginilor care pot rula simultan.</translation>
     </message>
     <message>
       <source>Processing was canceled.
@@ -414,6 +414,30 @@ Instalează encoderul/delegatul necesar sau alege alt format de ieșire.</transl
       <source>Original files will be replaced.</source>
       <translation>Fișierele originale vor fi înlocuite.</translation>
     </message>
+    <message>
+      <source>JPEG files with non-normal EXIF Orientation are rotated losslessly by updating metadata when XMP Orientation is absent or matches EXIF. For other JPEG files, jpegtran was not found, so ImageMagick will re-encode them.</source>
+      <translation>Fișierele JPEG cu Orientation EXIF nenormal sunt rotite fără pierderi prin actualizarea metadatelor atunci când XMP Orientation lipsește sau corespunde cu EXIF. Pentru celelalte fișiere JPEG, jpegtran nu a fost găsit, astfel că ImageMagick le va recodifica.</translation>
+    </message>
+    <message>
+      <source>JPEG files with non-normal EXIF Orientation are rotated losslessly by updating metadata when XMP Orientation is absent or matches EXIF. Other JPEG files use jpegtran when possible and fall back to ImageMagick only when necessary.</source>
+      <translation>Fișierele JPEG cu Orientation EXIF nenormal sunt rotite fără pierderi prin actualizarea metadatelor atunci când XMP Orientation lipsește sau corespunde cu EXIF. Celelalte fișiere JPEG folosesc jpegtran când este posibil și trec la ImageMagick doar când este necesar.</translation>
+    </message>
+    <message>
+      <source>Lossless JPEG rotation was not possible; the image was re-encoded with ImageMagick.</source>
+      <translation>Rotirea JPEG fără pierderi nu a fost posibilă; imaginea a fost recodificată cu ImageMagick.</translation>
+    </message>
+    <message>
+      <source>Lossless JPEG orientation update was not possible; the image was re-encoded with ImageMagick.</source>
+      <translation>Actualizarea fără pierderi a orientării JPEG nu a fost posibilă; imaginea a fost recodificată cu ImageMagick.</translation>
+    </message>
+    <message>
+      <source>JPEG Orientation metadata is malformed or unsupported; lossless rotation was skipped and the image was re-encoded with ImageMagick.</source>
+      <translation>Metadatele JPEG Orientation sunt invalide sau nesuportate; rotirea fără pierderi a fost omisă, iar imaginea a fost recodificată cu ImageMagick.</translation>
+    </message>
+    <message>
+      <source>JPEG EXIF and XMP Orientation metadata disagree; lossless rotation was skipped and the image was re-encoded with ImageMagick.</source>
+      <translation>Metadatele JPEG EXIF și XMP Orientation nu concordă; rotirea fără pierderi a fost omisă, iar imaginea a fost recodificată cu ImageMagick.</translation>
+    </message>
   </context>
   <context>
     <name>ImageMagickRunner</name>
@@ -450,8 +474,8 @@ Joburi active: %4</translation>
       <translation>Calea temporară sau finală de ieșire nu este validă.</translation>
     </message>
     <message>
-      <source>ImageMagick reported success but did not create the output file.</source>
-      <translation>ImageMagick a raportat succes, dar nu a creat fișierul de ieșire.</translation>
+      <source>The image processor reported success but did not create the output file.</source>
+      <translation>Procesorul de imagini a raportat succes, dar nu a creat fișierul de ieșire.</translation>
     </message>
     <message>
       <source>Could not atomically replace the output file: %1</source>
@@ -464,6 +488,18 @@ Joburi active: %4</translation>
     <message>
       <source>Could not preserve existing file metadata: %1</source>
       <translation>Nu s-au putut păstra metadatele fișierului existent: %1</translation>
+    </message>
+    <message>
+      <source>Could not read JPEG data.</source>
+      <translation>Datele JPEG nu au putut fi citite.</translation>
+    </message>
+    <message>
+      <source>JPEG EXIF Orientation could not be updated losslessly.</source>
+      <translation>Orientarea EXIF JPEG nu a putut fi actualizată fără pierderi.</translation>
+    </message>
+    <message>
+      <source>Could not write temporary JPEG data.</source>
+      <translation>Datele JPEG temporare nu au putut fi scrise.</translation>
     </message>
   </context>
   <context>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "imagemagickrunner.h"
+#include "jpegorientation.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -39,7 +40,7 @@ ImageMagickRunner::ImageMagickRunner(QObject *parent)
 ImageMagickRunner::~ImageMagickRunner()
 {
     // QObject children are destroyed after this destructor body. Stop every
-    // ImageMagick child first so it cannot recreate or continue writing a
+    // child image processor first so it cannot recreate or continue writing a
     // staging file after cleanup has already run.
     const auto processes = m_activeProcesses.keys();
     for (QProcess *process : processes) {
@@ -224,6 +225,7 @@ void ImageMagickRunner::start(
     m_errors.clear();
     m_warnings.clear();
     m_activeProcesses.clear();
+    m_activeMetadataJobs = 0;
     const int jobCount = int(m_jobs.size());
     m_maxWorkers = qMax(1, qMin(maxWorkers, qMax(1, jobCount)));
     m_memoryLimitMiB = parallelMemoryLimitMiB(m_maxWorkers);
@@ -245,7 +247,7 @@ void ImageMagickRunner::pumpQueue()
         return;
 
     if (m_canceled) {
-        if (m_activeProcesses.isEmpty())
+        if (m_activeProcesses.isEmpty() && m_activeMetadataJobs == 0)
             finishBatch();
         return;
     }
@@ -258,7 +260,7 @@ void ImageMagickRunner::pumpQueue()
         return;
 
     while (!m_canceled
-           && m_activeProcesses.size() < m_maxWorkers
+           && (m_activeProcesses.size() + m_activeMetadataJobs) < m_maxWorkers
            && m_nextIndex < m_jobs.size()) {
         const int index = m_nextIndex++;
         startJob(index);
@@ -272,17 +274,31 @@ void ImageMagickRunner::pumpQueue()
     if (m_finished || m_canceled || !m_progress)
         return;
 
-    if (m_completed >= m_jobs.size() && m_activeProcesses.isEmpty())
+    if (m_completed >= m_jobs.size()
+        && m_activeProcesses.isEmpty()
+        && m_activeMetadataJobs == 0)
         finishBatch();
 }
 
-void ImageMagickRunner::startJob(int index)
+void ImageMagickRunner::startJob(int index, bool fallback)
 {
     if (m_finished || m_canceled || index < 0 || index >= m_jobs.size())
         return;
 
+    const ImageMagickJob &job = m_jobs.at(index);
+    if (!fallback && job.metadataOnly) {
+        ++m_activeMetadataJobs;
+        QTimer::singleShot(0, this, [this, index]() {
+            runMetadataOnlyJob(index);
+        });
+        return;
+    }
+
     auto *process = new QProcess(this);
-    m_activeProcesses.insert(process, index);
+    ActiveProcessInfo processInfo;
+    processInfo.index = index;
+    processInfo.fallback = fallback;
+    m_activeProcesses.insert(process, processInfo);
 
     connect(process,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
@@ -308,11 +324,90 @@ void ImageMagickRunner::startJob(int index)
         }
     }
 
-    const ImageMagickJob &job = m_jobs.at(index);
+    const QString program = fallback ? job.fallbackProgram
+                                     : (job.program.isEmpty() ? executable() : job.program);
+    const QStringList arguments = fallback ? job.fallbackArguments : job.arguments;
+
     process->setProcessEnvironment(environment);
-    process->setProgram(executable());
-    process->setArguments(job.arguments);
+    process->setProgram(program);
+    process->setArguments(arguments);
     process->start();
+}
+
+void ImageMagickRunner::runMetadataOnlyJob(int index)
+{
+    if (m_activeMetadataJobs > 0)
+        --m_activeMetadataJobs;
+
+    if (m_finished || index < 0 || index >= m_jobs.size())
+        return;
+
+    const ImageMagickJob job = m_jobs.at(index);
+    if (m_canceled) {
+        cleanupTemporaryOutput(job.temporaryOutput);
+        if (m_activeProcesses.isEmpty() && m_activeMetadataJobs == 0)
+            finishBatch();
+        return;
+    }
+
+    QFile source(job.input);
+    if (!source.open(QIODevice::ReadOnly)) {
+        recordFailure(job.input, tr("Could not read JPEG data."));
+        ++m_completed;
+    } else {
+        QByteArray data = source.readAll();
+        source.close();
+
+        const int oldOrientation = rewriteJpegOrientation(data, job.metadataRotateClockwise);
+        if (oldOrientation == 0) {
+            cleanupTemporaryOutput(job.temporaryOutput);
+            if (!job.fallbackProgram.isEmpty()) {
+                startJob(index, true);
+                QTimer::singleShot(0, this, &ImageMagickRunner::pumpQueue);
+                return;
+            }
+            recordFailure(job.input, tr("JPEG EXIF Orientation could not be updated losslessly."));
+            ++m_completed;
+        } else {
+            QFile output(job.temporaryOutput);
+            const bool opened = output.open(QIODevice::WriteOnly | QIODevice::Truncate);
+            const qint64 written = opened ? output.write(data) : -1;
+            const bool flushed = opened && written == data.size() && output.flush();
+            output.close();
+
+            if (!flushed) {
+                cleanupTemporaryOutput(job.temporaryOutput);
+                recordFailure(job.input, tr("Could not write temporary JPEG data."));
+                ++m_completed;
+            } else {
+                QString commitError;
+                QStringList commitWarnings;
+                if (commitTemporaryOutput(job, &commitError, &commitWarnings)) {
+                    ++m_succeeded;
+                    for (const QString &warning : std::as_const(commitWarnings))
+                        m_warnings << tr("%1: %2").arg(QFileInfo(job.input).fileName(), warning);
+                    if (!job.successWarning.isEmpty())
+                        m_warnings << tr("%1: %2").arg(QFileInfo(job.input).fileName(), job.successWarning);
+                } else {
+                    cleanupTemporaryOutput(job.temporaryOutput);
+                    recordFailure(job.input, commitError);
+                }
+                ++m_completed;
+            }
+        }
+    }
+
+    if (m_canceled) {
+        if (m_activeProcesses.isEmpty() && m_activeMetadataJobs == 0)
+            finishBatch();
+        return;
+    }
+
+    updateProgress();
+    if (m_finished || m_canceled || !m_progress)
+        return;
+
+    QTimer::singleShot(0, this, &ImageMagickRunner::pumpQueue);
 }
 
 static bool copyLinuxExtendedMetadata(const QString &source,
@@ -411,7 +506,7 @@ bool ImageMagickRunner::commitTemporaryOutput(const ImageMagickJob &job, QString
 
     if (!QFileInfo::exists(job.temporaryOutput)) {
         if (errorMessage)
-            *errorMessage = tr("ImageMagick reported success but did not create the output file.");
+            *errorMessage = tr("The image processor reported success but did not create the output file.");
         return false;
     }
 
@@ -454,35 +549,48 @@ void ImageMagickRunner::handleProcessFinished(
     if (m_finished || !m_activeProcesses.contains(process))
         return;
 
-    const int index = m_activeProcesses.take(process);
+    const ActiveProcessInfo processInfo = m_activeProcesses.take(process);
+    const int index = processInfo.index;
     const ImageMagickJob job = m_jobs.value(index);
 
     if (m_canceled) {
         cleanupTemporaryOutput(job.temporaryOutput);
-    } else {
-        if (exitStatus == QProcess::NormalExit && exitCode == 0) {
-            QString commitError;
-            QStringList commitWarnings;
-            if (commitTemporaryOutput(job, &commitError, &commitWarnings)) {
-                ++m_succeeded;
-                for (const QString &warning : std::as_const(commitWarnings))
-                    m_warnings << tr("%1: %2").arg(QFileInfo(job.input).fileName(), warning);
-            } else {
-                cleanupTemporaryOutput(job.temporaryOutput);
-                recordFailure(job.input, commitError);
-            }
+    } else if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+        QString commitError;
+        QStringList commitWarnings;
+        if (commitTemporaryOutput(job, &commitError, &commitWarnings)) {
+            ++m_succeeded;
+            for (const QString &warning : std::as_const(commitWarnings))
+                m_warnings << tr("%1: %2").arg(QFileInfo(job.input).fileName(), warning);
+
+            const QString jobWarning = processInfo.fallback ? job.fallbackWarning
+                                                            : job.successWarning;
+            if (!jobWarning.isEmpty())
+                m_warnings << tr("%1: %2").arg(QFileInfo(job.input).fileName(), jobWarning);
         } else {
             cleanupTemporaryOutput(job.temporaryOutput);
-            const QString stderrText = QString::fromUtf8(process->readAllStandardError()).trimmed();
-            recordFailure(job.input, stderrText.isEmpty() ? tr("ImageMagick failed.") : stderrText);
+            recordFailure(job.input, commitError);
         }
+        ++m_completed;
+    } else if (!processInfo.fallback && !job.fallbackProgram.isEmpty()) {
+        // jpegtran -perfect intentionally fails for JPEG dimensions that cannot
+        // be transformed exactly. Remove any partial staging file and retry the
+        // same job with the lossless-safe fallback configured by the dialog.
+        cleanupTemporaryOutput(job.temporaryOutput);
+        process->deleteLater();
+        startJob(index, true);
+        return;
+    } else {
+        cleanupTemporaryOutput(job.temporaryOutput);
+        const QString stderrText = QString::fromUtf8(process->readAllStandardError()).trimmed();
+        recordFailure(job.input, stderrText.isEmpty() ? tr("ImageMagick failed.") : stderrText);
         ++m_completed;
     }
 
     process->deleteLater();
 
     if (m_canceled) {
-        if (m_activeProcesses.isEmpty())
+        if (m_activeProcesses.isEmpty() && m_activeMetadataJobs == 0)
             finishBatch();
         return;
     }
@@ -499,19 +607,25 @@ void ImageMagickRunner::handleProcessError(QProcess *process, QProcess::ProcessE
     if (m_finished || error != QProcess::FailedToStart || !m_activeProcesses.contains(process))
         return;
 
-    const int index = m_activeProcesses.take(process);
+    const ActiveProcessInfo processInfo = m_activeProcesses.take(process);
+    const int index = processInfo.index;
     const ImageMagickJob job = m_jobs.value(index);
     cleanupTemporaryOutput(job.temporaryOutput);
+
+    process->deleteLater();
+
+    if (!m_canceled && !processInfo.fallback && !job.fallbackProgram.isEmpty()) {
+        startJob(index, true);
+        return;
+    }
 
     if (!m_canceled) {
         recordFailure(job.input, tr("Could not start ImageMagick."));
         ++m_completed;
     }
 
-    process->deleteLater();
-
     if (m_canceled) {
-        if (m_activeProcesses.isEmpty())
+        if (m_activeProcesses.isEmpty() && m_activeMetadataJobs == 0)
             finishBatch();
         return;
     }
@@ -533,7 +647,7 @@ void ImageMagickRunner::updateProgress()
             .arg(m_operationLabel)
             .arg(m_completed)
             .arg(m_jobs.size())
-            .arg(m_activeProcesses.size()));
+            .arg(m_activeProcesses.size() + m_activeMetadataJobs));
     m_progress->setValue(m_completed);
 }
 
@@ -605,7 +719,7 @@ void ImageMagickRunner::cancel()
         });
     }
 
-    if (m_activeProcesses.isEmpty())
+    if (m_activeProcesses.isEmpty() && m_activeMetadataJobs == 0)
         finishBatch();
 }
 
@@ -660,7 +774,7 @@ void ImageMagickRunner::finishBatch()
     // Normal completion requires every active process to have reported its final
     // state. Cancellation follows the same rule so the final report cannot race
     // with a late worker callback.
-    if (!m_activeProcesses.isEmpty())
+    if (!m_activeProcesses.isEmpty() || m_activeMetadataJobs > 0)
         return;
 
     m_finished = true;

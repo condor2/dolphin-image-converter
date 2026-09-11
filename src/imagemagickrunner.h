@@ -15,7 +15,14 @@ class QWidget;
 struct ImageMagickJob
 {
     QString input;
+    QString program;
     QStringList arguments;
+    QString fallbackProgram;
+    QStringList fallbackArguments;
+    QString fallbackWarning;
+    QString successWarning;
+    bool metadataOnly = false;
+    bool metadataRotateClockwise = false;
     QString temporaryOutput;
     QString finalOutput;
 };
@@ -50,8 +57,14 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    struct ActiveProcessInfo {
+        int index = -1;
+        bool fallback = false;
+    };
+
     void pumpQueue();
-    void startJob(int index);
+    void startJob(int index, bool fallback = false);
+    void runMetadataOnlyJob(int index);
     void handleProcessFinished(QProcess *process, int exitCode, QProcess::ExitStatus exitStatus);
     void handleProcessError(QProcess *process, QProcess::ProcessError error);
     void updateProgress();
@@ -63,7 +76,7 @@ private:
     static qint64 parallelMemoryLimitMiB(int workers);
 
     QVector<ImageMagickJob> m_jobs;
-    QHash<QProcess *, int> m_activeProcesses;
+    QHash<QProcess *, ActiveProcessInfo> m_activeProcesses;
     QProgressDialog *m_progress = nullptr;
     QString m_operationLabel;
     int m_nextIndex = 0;
@@ -71,6 +84,7 @@ private:
     int m_succeeded = 0;
     int m_failed = 0;
     int m_maxWorkers = 1;
+    int m_activeMetadataJobs = 0;
     qint64 m_memoryLimitMiB = 0;
     bool m_canceled = false;
     bool m_finished = false;
