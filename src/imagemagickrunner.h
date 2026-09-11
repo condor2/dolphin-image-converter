@@ -29,6 +29,7 @@ public:
 
     static QString executable();
     static bool isAvailable();
+    static bool canWriteFormat(const QString &format);
     static void cleanupStaleTemporaryOutputs(const QStringList &directories);
 
     void start(

@@ -349,13 +349,16 @@ QStringList ImageConverterDialog::buildArguments(const QString &input, const QSt
 
     if (m_mode == Mode::Convert) {
         const QString format = m_format->currentData().toString();
-        // JPEG and ordinary PNG outputs are single-frame. Reading only the first
-        // frame prevents ImageMagick from creating name-0/name-1 side outputs
-        // for animated GIFs or multi-page TIFF files.
-        if (format == QStringLiteral("jpg") || format == QStringLiteral("png"))
+        // JPEG, ordinary PNG, and AVIF outputs are treated as single-frame.
+        // Reading only frame 0 prevents ImageMagick from creating name-0/name-1
+        // side outputs for animated GIFs or multi-page TIFF files.
+        if (format == QStringLiteral("jpg")
+            || format == QStringLiteral("png")
+            || format == QStringLiteral("avif")) {
             args << (input + QStringLiteral("[0]"));
-        else
+        } else {
             args << input;
+        }
     } else {
         args << input;
     }
@@ -466,6 +469,32 @@ static qint64 hardLinkCount(const QString &path)
     return 1;
 }
 
+void ImageConverterDialog::reject()
+{
+    // Keep the owner dialog alive while ImageMagickRunner is stopping child
+    // processes. This also covers the window-manager close button.
+    if (m_runner)
+        return;
+    QDialog::reject();
+}
+
+static QString imageMagickFormatForPath(const QString &path)
+{
+    QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix.isEmpty()) {
+        QMimeDatabase database;
+        suffix = database.mimeTypeForFile(path, QMimeDatabase::MatchContent).preferredSuffix().toLower();
+    }
+
+    if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
+        return QStringLiteral("JPEG");
+    if (suffix == QStringLiteral("tif") || suffix == QStringLiteral("tiff"))
+        return QStringLiteral("TIFF");
+    if (suffix == QStringLiteral("heic") || suffix == QStringLiteral("heif"))
+        return QStringLiteral("HEIC");
+    return suffix.toUpper();
+}
+
 void ImageConverterDialog::processImages()
 {
     if (m_runner)
@@ -475,6 +504,33 @@ void ImageConverterDialog::processImages()
         QMessageBox::critical(this, tr("ImageMagick not found"),
                               tr("The 'magick' executable was not found in PATH.\n\n"
                                  "Install ImageMagick 7 and try again."));
+        return;
+    }
+
+    QSet<QString> requiredWritableFormats;
+    if (m_mode == Mode::Convert) {
+        requiredWritableFormats.insert(m_format->currentData().toString().toUpper());
+    } else {
+        for (const QString &input : m_files) {
+            const QString format = imageMagickFormatForPath(input);
+            if (!format.isEmpty())
+                requiredWritableFormats.insert(format);
+        }
+    }
+
+    QStringList unavailableFormats;
+    for (const QString &format : std::as_const(requiredWritableFormats)) {
+        if (!ImageMagickRunner::canWriteFormat(format))
+            unavailableFormats << format;
+    }
+    if (!unavailableFormats.isEmpty()) {
+        unavailableFormats.sort(Qt::CaseInsensitive);
+        QMessageBox::warning(
+            this,
+            tr("Output format unavailable"),
+            tr("ImageMagick cannot write the following output format(s) on this system:\n\n%1\n\n"
+               "Install the required encoder/delegate or choose a different output format.")
+                .arg(unavailableFormats.join(QStringLiteral(", "))));
         return;
     }
 

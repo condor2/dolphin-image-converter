@@ -24,6 +24,7 @@ public:
     };
 
     explicit ImageConverterDialog(Mode mode, QStringList files, QWidget *parent = nullptr);
+    void reject() override;
 
 private slots:
     void processImages();

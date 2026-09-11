@@ -1,11 +1,9 @@
-# Dolphin Image Converter 0.2.0
+# Dolphin Image Converter 0.2.1
 
-Qt 6 batch image tools integrated into KDE Dolphin through a Service Menu.
-
-License: GPL-3.0-or-later.
+Batch image tools for KDE Dolphin, powered by Qt 6 and ImageMagick.
 
 ## Screenshot
-<img width="443" height="438" alt="Screenshot_20260812_142614" src="https://github.com/user-attachments/assets/041fb069-b2aa-4e6b-868f-576aae084210" />
+<img width="440" height="557" alt="Screenshot_20260911_084052" src="https://github.com/user-attachments/assets/9c97d26e-5af1-4ced-b222-ffed684c8d9a" />
 
 ## Features
 
@@ -20,10 +18,10 @@ License: GPL-3.0-or-later.
 - Batch processing with configurable parallel ImageMagick workers.
 - ImageMagick internal threading is limited when several workers are active.
 - Atomic output staging: ImageMagick writes to a hidden temporary file in the destination directory and the final path is replaced only after a successful conversion.
-- Cancel stops new work and terminates active workers without leaving a partially written original as the committed result.
+- Cancel stops new work, keeps the progress window modal while active workers terminate, and does not leave a partially written original as the committed result.
 - Existing symlink targets are resolved for the atomic commit; dangling output symlinks are refused.
 - Best-effort preservation of permissions and Linux user/ACL extended attributes when replacing an existing file.
-- Romanian and English UI, including the Qt dialogs, not only the Dolphin menu.
+- Romanian and English application strings. Standard Qt button labels depend on the Qt/platform translation catalogs installed by the desktop environment.
 - Stale temporary files created by the application are cleaned conservatively.
 
 ## Supported Dolphin MIME types
@@ -51,7 +49,7 @@ sudo pacman -S --needed \
 
 `qt6-tools` provides Qt LinguistTools used to build the embedded Romanian translation.
 
-ImageMagick 7 must provide the `magick` executable. WebP and AVIF/HEIF support depends on the delegates enabled in the installed ImageMagick package.
+ImageMagick 7 must provide the `magick` executable. WebP and AVIF/HEIF support depends on the delegates enabled in the installed ImageMagick package. Before a batch starts, the application refuses optional output formats that ImageMagick reports as non-writable; this also prevents in-place HEIC/HEIF resize or rotation when the HEVC encoder is unavailable.
 
 ## Install
 
@@ -117,7 +115,7 @@ When converting transparency to JPEG, transparent pixels are composited onto whi
 
 When "Remove EXIF and other metadata" is enabled, ImageMagick `-strip` also removes embedded ICC color profiles. The dialog states this explicitly so wide-gamut images are not silently assumed to retain their original profile.
 
-JPEG and normal PNG are treated as single-image output formats. When the source contains multiple frames/pages, such as an animated GIF or multi-page TIFF, only frame/page 0 is used for those outputs.
+JPEG, normal PNG, and AVIF are treated as single-image output formats. When the source contains multiple frames/pages, such as an animated GIF or multi-page TIFF, only frame/page 0 is used for those outputs.
 
 ## Parallel processing
 
@@ -139,7 +137,9 @@ The Romanian catalog is:
 translations/dolphin-image-converter_ro.ts
 ```
 
-CMake compiles and embeds it under `:/i18n`. The application honors both the Qt system locale and the first `LANGUAGE` preference.
+CMake compiles and embeds it under `:/i18n`. The application follows `QLocale::system().uiLanguages()` in preference order. If the first preferred language is English, it keeps the built-in English strings instead of falling through to Romanian.
+
+The project translates its own application strings. Standard Qt labels such as OK, Cancel, and Show Details are translated only when the corresponding Qt/platform translation catalog is installed.
 
 ## Current limitations
 
@@ -147,3 +147,9 @@ CMake compiles and embeds it under `:/i18n`. The application honors both the Qt 
 - Settings are not persisted between invocations yet.
 - A separate output folder is available for Convert, not yet for Resize.
 - The application is exposed through Dolphin and is not installed as a standalone desktop launcher.
+
+## License
+
+Dolphin Image Converter is licensed under the GNU General Public License v3.0 or later.
+
+See [LICENSE](LICENSE) for the full license text.

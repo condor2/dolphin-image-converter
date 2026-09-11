@@ -394,6 +394,22 @@ Avertismente: %3</translation>
       <source>Removing metadata also removes embedded ICC color profiles.</source>
       <translation>Eliminarea metadatelor șterge și profilurile de culoare ICC încorporate.</translation>
     </message>
+    <message>
+      <source>Output format unavailable</source>
+      <translation>Formatul de ieșire nu este disponibil</translation>
+    </message>
+    <message>
+      <source>ImageMagick cannot write the following output format(s) on this system:
+
+%1
+
+Install the required encoder/delegate or choose a different output format.</source>
+      <translation>ImageMagick nu poate scrie următoarele formate de ieșire pe acest sistem:
+
+%1
+
+Instalează encoderul/delegatul necesar sau alege alt format de ieșire.</translation>
+    </message>
   </context>
   <context>
     <name>ImageMagickRunner</name>

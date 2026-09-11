@@ -6,6 +6,7 @@
 #include <QCommandLineParser>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QLibraryInfo>
 #include <QLocale>
 #include <QTranslator>
 #include <QUrl>
@@ -35,25 +36,31 @@ int main(int argc, char *argv[])
     QApplication::setApplicationVersion(QStringLiteral(APP_VERSION));
 
     QTranslator translator;
-    bool translationLoaded = false;
+    QTranslator qtTranslator;
+    const QStringList uiLanguages = QLocale::system().uiLanguages();
+    const bool englishFirst = !uiLanguages.isEmpty()
+                           && uiLanguages.first().startsWith(QStringLiteral("en"), Qt::CaseInsensitive);
 
-    // LANGUAGE may override the desktop UI language to override the UI language without
-    // changing LANG. Try its first preference explicitly, then the system locale.
-    const QString languageOverride = qEnvironmentVariable("LANGUAGE").section(QLatin1Char(':'), 0, 0);
-    if (!languageOverride.isEmpty()) {
-        translationLoaded = translator.load(QLocale(languageOverride),
-                                            QStringLiteral("dolphin-image-converter"),
-                                            QStringLiteral("_"),
-                                            QStringLiteral(":/i18n"));
+    // QLocale::system().uiLanguages() already honors LANGUAGE on Unix. Do not
+    // fall through from an explicitly preferred English locale to Romanian just
+    // because this project does not ship a separate English catalog.
+    if (!englishFirst) {
+        if (translator.load(QLocale::system(),
+                            QStringLiteral("dolphin-image-converter"),
+                            QStringLiteral("_"),
+                            QStringLiteral(":/i18n"))) {
+            app.installTranslator(&translator);
+        }
+
+        // Standard Qt button text (OK, Cancel, Show Details...) is translated
+        // when the platform provides the matching qtbase catalog.
+        if (qtTranslator.load(QLocale::system(),
+                              QStringLiteral("qtbase"),
+                              QStringLiteral("_"),
+                              QLibraryInfo::path(QLibraryInfo::TranslationsPath))) {
+            app.installTranslator(&qtTranslator);
+        }
     }
-    if (!translationLoaded) {
-        translationLoaded = translator.load(QLocale::system(),
-                                            QStringLiteral("dolphin-image-converter"),
-                                            QStringLiteral("_"),
-                                            QStringLiteral(":/i18n"));
-    }
-    if (translationLoaded)
-        app.installTranslator(&translator);
 
     QApplication::setApplicationDisplayName(QObject::tr("Dolphin Image Converter"));
 

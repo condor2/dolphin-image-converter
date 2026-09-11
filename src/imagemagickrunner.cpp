@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QTemporaryDir>
 #include <QTimer>
 
 #include <cerrno>
@@ -35,6 +36,20 @@ ImageMagickRunner::ImageMagickRunner(QObject *parent)
 
 ImageMagickRunner::~ImageMagickRunner()
 {
+    // QObject children are destroyed after this destructor body. Stop every
+    // ImageMagick child first so it cannot recreate or continue writing a
+    // staging file after cleanup has already run.
+    const auto processes = m_activeProcesses.keys();
+    for (QProcess *process : processes) {
+        if (!process)
+            continue;
+        process->disconnect(this);
+        if (process->state() != QProcess::NotRunning) {
+            process->kill();
+            process->waitForFinished(3000);
+        }
+    }
+    m_activeProcesses.clear();
     cleanupAllTemporaryOutputs();
 }
 
@@ -46,6 +61,57 @@ QString ImageMagickRunner::executable()
 bool ImageMagickRunner::isAvailable()
 {
     return !executable().isEmpty();
+}
+
+bool ImageMagickRunner::canWriteFormat(const QString &format)
+{
+    const QString program = executable();
+    if (program.isEmpty())
+        return false;
+
+    QString coder = format.trimmed().toUpper();
+    if (coder == QStringLiteral("JPG"))
+        coder = QStringLiteral("JPEG");
+    else if (coder == QStringLiteral("TIF"))
+        coder = QStringLiteral("TIFF");
+    else if (coder == QStringLiteral("HEIF"))
+        coder = QStringLiteral("HEIC");
+
+    static QHash<QString, bool> cache;
+    if (cache.contains(coder))
+        return cache.value(coder);
+
+    QString extension = coder.toLower();
+    if (coder == QStringLiteral("JPEG"))
+        extension = QStringLiteral("jpg");
+    else if (coder == QStringLiteral("TIFF"))
+        extension = QStringLiteral("tif");
+    else if (coder == QStringLiteral("HEIC"))
+        extension = QStringLiteral("heic");
+
+    QTemporaryDir directory;
+    if (!directory.isValid()) {
+        cache.insert(coder, false);
+        return false;
+    }
+
+    const QString output = directory.filePath(QStringLiteral("probe.") + extension);
+    QProcess process;
+    process.setProgram(program);
+    process.setArguments({QStringLiteral("-size"),
+                          QStringLiteral("16x16"),
+                          QStringLiteral("xc:white"),
+                          coder + QStringLiteral(":") + output});
+    process.start();
+
+    const bool started = process.waitForStarted(3000);
+    const bool finished = started && process.waitForFinished(10000);
+    const bool writable = finished
+                       && process.exitStatus() == QProcess::NormalExit
+                       && process.exitCode() == 0
+                       && QFileInfo::exists(output);
+    cache.insert(coder, writable);
+    return writable;
 }
 
 static bool processIdIsAlive(qint64 pid)
@@ -65,17 +131,14 @@ static bool processIdIsAlive(qint64 pid)
 
 void ImageMagickRunner::cleanupStaleTemporaryOutputs(const QStringList &directories)
 {
-    // Temporary files include the creator PID. A second exact pattern is kept
-    // for early development builds that used UUID-only names. Unrelated hidden
-    // files are never touched.
+    // Only files carrying this application's PID + UUID staging prefix are
+    // eligible. The optional -N suffix covers ImageMagick sequence side files
+    // from a worker that was interrupted before cleanup.
     static const QRegularExpression currentPattern(
-        QStringLiteral(R"(^\.dolphin-image-converter-(\d+)-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:\.[^/]+)?$)"));
-    static const QRegularExpression legacyPattern(
-        QStringLiteral(R"(^\.dolphin-image-converter-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:\.[^/]+)?$)"));
+        QStringLiteral(R"(^\.dolphin-image-converter-(\d+)-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:-\d+)?(?:\.[^/]+)?$)"));
 
     const QDateTime now = QDateTime::currentDateTimeUtc();
     constexpr qint64 currentMinAgeSeconds = 12 * 60 * 60;
-    constexpr qint64 legacyMinAgeSeconds = 24 * 60 * 60;
 
     QStringList uniqueDirectories = directories;
     uniqueDirectories.removeDuplicates();
@@ -91,20 +154,16 @@ void ImageMagickRunner::cleanupStaleTemporaryOutputs(const QStringList &director
             QDir::NoSort);
 
         for (const QFileInfo &entry : entries) {
-            const QString name = entry.fileName();
             const qint64 ageSeconds = entry.lastModified().toUTC().secsTo(now);
-            if (ageSeconds < 0)
+            if (ageSeconds < currentMinAgeSeconds)
                 continue;
 
-            const QRegularExpressionMatch currentMatch = currentPattern.match(name);
-            if (currentMatch.hasMatch()) {
-                const qint64 pid = currentMatch.captured(1).toLongLong();
-                if (ageSeconds >= currentMinAgeSeconds && !processIdIsAlive(pid))
-                    QFile::remove(entry.absoluteFilePath());
+            const QRegularExpressionMatch match = currentPattern.match(entry.fileName());
+            if (!match.hasMatch())
                 continue;
-            }
 
-            if (legacyPattern.match(name).hasMatch() && ageSeconds >= legacyMinAgeSeconds)
+            const qint64 pid = match.captured(1).toLongLong();
+            if (!processIdIsAlive(pid))
                 QFile::remove(entry.absoluteFilePath());
         }
     }
@@ -474,13 +533,30 @@ void ImageMagickRunner::updateProgress()
 
 void ImageMagickRunner::cancel()
 {
-    if (m_finished || m_canceled)
+    if (m_finished)
         return;
+
+    if (m_canceled) {
+        // A repeated close/cancel can make QProgressDialog hide itself again.
+        // Keep the modal status window visible until the final worker exits.
+        if (m_progress) {
+            m_progress->setLabelText(tr("Canceling running jobs..."));
+            m_progress->show();
+            m_progress->raise();
+        }
+        return;
+    }
 
     m_canceled = true;
 
-    if (m_progress)
+    if (m_progress) {
+        // QProgressDialog::cancel() hides itself via reset(). Keep it visible
+        // and window-modal until every running worker has really stopped.
         m_progress->setLabelText(tr("Canceling running jobs..."));
+        m_progress->setCancelButton(nullptr);
+        m_progress->show();
+        m_progress->raise();
+    }
 
     const auto processes = m_activeProcesses.keys();
     for (QProcess *process : processes) {
@@ -507,8 +583,33 @@ void ImageMagickRunner::recordFailure(const QString &input, const QString &messa
 
 void ImageMagickRunner::cleanupTemporaryOutput(const QString &path)
 {
-    if (!path.isEmpty())
-        QFile::remove(path);
+    if (path.isEmpty())
+        return;
+
+    QFile::remove(path);
+
+    // ImageMagick may create sequence side files such as ...-0.avif when a
+    // multi-frame input is sent to a coder that emits separate files. The
+    // staging basename contains a UUID, so matching numeric siblings are safe
+    // to remove without touching user files.
+    const QFileInfo info(path);
+    const QString fileName = info.fileName();
+    const int dot = fileName.lastIndexOf(QLatin1Char('.'));
+    const QString stem = dot > 0 ? fileName.left(dot) : fileName;
+    const QString extension = dot > 0 ? fileName.mid(dot) : QString();
+    const QRegularExpression siblingPattern(
+        QStringLiteral("^%1-\\d+%2$")
+            .arg(QRegularExpression::escape(stem), QRegularExpression::escape(extension)));
+
+    QDir directory = info.dir();
+    const QFileInfoList entries = directory.entryInfoList(
+        QStringList{stem + QStringLiteral("-*") + extension},
+        QDir::Files | QDir::Hidden | QDir::NoSymLinks,
+        QDir::NoSort);
+    for (const QFileInfo &entry : entries) {
+        if (siblingPattern.match(entry.fileName()).hasMatch())
+            QFile::remove(entry.absoluteFilePath());
+    }
 }
 
 void ImageMagickRunner::cleanupAllTemporaryOutputs()

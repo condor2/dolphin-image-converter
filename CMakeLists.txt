@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(dolphin-image-converter
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "Batch image resize, rotate and conversion integration for KDE Dolphin"
     LANGUAGES CXX
 )
