@@ -5,9 +5,11 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeyEvent>
 #include <QPointer>
 #include <QProcessEnvironment>
 #include <QProgressDialog>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -70,7 +72,10 @@ bool ImageMagickRunner::canWriteFormat(const QString &format)
         return false;
 
     QString coder = format.trimmed().toUpper();
-    if (coder == QStringLiteral("JPG"))
+    if (coder == QStringLiteral("JPG")
+        || coder == QStringLiteral("JPE")
+        || coder == QStringLiteral("JFIF")
+        || coder == QStringLiteral("JIF"))
         coder = QStringLiteral("JPEG");
     else if (coder == QStringLiteral("TIF"))
         coder = QStringLiteral("TIFF");
@@ -229,6 +234,7 @@ void ImageMagickRunner::start(
     m_progress->setAutoClose(false);
     m_progress->setAutoReset(false);
     connect(m_progress, &QProgressDialog::canceled, this, &ImageMagickRunner::cancel);
+    m_progress->installEventFilter(this);
 
     QTimer::singleShot(0, this, &ImageMagickRunner::pumpQueue);
 }
@@ -531,6 +537,21 @@ void ImageMagickRunner::updateProgress()
     m_progress->setValue(m_completed);
 }
 
+bool ImageMagickRunner::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_progress && m_progress && !m_finished) {
+        const bool escapePressed = event->type() == QEvent::KeyPress
+                                && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape;
+        if (event->type() == QEvent::Close || escapePressed) {
+            event->ignore();
+            cancel();
+            return true;
+        }
+    }
+
+    return QObject::eventFilter(watched, event);
+}
+
 void ImageMagickRunner::cancel()
 {
     if (m_finished)
@@ -550,12 +571,25 @@ void ImageMagickRunner::cancel()
     m_canceled = true;
 
     if (m_progress) {
-        // QProgressDialog::cancel() hides itself via reset(). Keep it visible
-        // and window-modal until every running worker has really stopped.
+        // QProgressDialog::cancel() normally hides itself via reset(). Keep it
+        // visible and modal until every worker has stopped. Disable the cancel
+        // button instead of deleting it while it may still be emitting clicked().
         m_progress->setLabelText(tr("Canceling running jobs..."));
-        m_progress->setCancelButton(nullptr);
+        const auto buttons = m_progress->findChildren<QPushButton *>();
+        for (QPushButton *button : buttons)
+            button->setEnabled(false);
         m_progress->show();
         m_progress->raise();
+
+        // Re-show on the next event-loop turn as well. This runs after the
+        // internal QProgressDialog cancel/reset path has finished hiding it.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_progress && m_canceled && !m_finished) {
+                m_progress->setLabelText(tr("Canceling running jobs..."));
+                m_progress->show();
+                m_progress->raise();
+            }
+        });
     }
 
     const auto processes = m_activeProcesses.keys();

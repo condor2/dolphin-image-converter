@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QVector>
 
+class QEvent;
 class QProgressDialog;
 class QWidget;
 
@@ -44,6 +45,9 @@ signals:
 
 private slots:
     void cancel();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void pumpQueue();

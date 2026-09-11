@@ -2,6 +2,7 @@
 #include "imageconverterdialog.h"
 #include "imagemagickrunner.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QComboBox>
@@ -486,8 +487,13 @@ static QString imageMagickFormatForPath(const QString &path)
         suffix = database.mimeTypeForFile(path, QMimeDatabase::MatchContent).preferredSuffix().toLower();
     }
 
-    if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
+    if (suffix == QStringLiteral("jpg")
+        || suffix == QStringLiteral("jpeg")
+        || suffix == QStringLiteral("jpe")
+        || suffix == QStringLiteral("jfif")
+        || suffix == QStringLiteral("jif")) {
         return QStringLiteral("JPEG");
+    }
     if (suffix == QStringLiteral("tif") || suffix == QStringLiteral("tiff"))
         return QStringLiteral("TIFF");
     if (suffix == QStringLiteral("heic") || suffix == QStringLiteral("heif"))
@@ -519,10 +525,12 @@ void ImageConverterDialog::processImages()
     }
 
     QStringList unavailableFormats;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
     for (const QString &format : std::as_const(requiredWritableFormats)) {
         if (!ImageMagickRunner::canWriteFormat(format))
             unavailableFormats << format;
     }
+    QApplication::restoreOverrideCursor();
     if (!unavailableFormats.isEmpty()) {
         unavailableFormats.sort(Qt::CaseInsensitive);
         QMessageBox::warning(

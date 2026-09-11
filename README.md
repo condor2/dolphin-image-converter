@@ -1,4 +1,4 @@
-# Dolphin Image Converter 0.2.1
+# Dolphin Image Converter 0.2.3
 
 Batch image tools for KDE Dolphin, powered by Qt 6 and ImageMagick.
 
