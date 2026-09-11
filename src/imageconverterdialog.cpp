@@ -21,6 +21,7 @@
 #include <QMimeType>
 #include <QPushButton>
 #include <QSet>
+#include <QSettings>
 #include <QSpinBox>
 #include <QThread>
 #include <QUuid>
@@ -36,6 +37,7 @@ ImageConverterDialog::ImageConverterDialog(Mode mode, QStringList files, QWidget
     : QDialog(parent), m_mode(mode), m_files(std::move(files))
 {
     buildUi();
+    loadSettings();
 }
 
 void ImageConverterDialog::buildUi()
@@ -80,7 +82,7 @@ void ImageConverterDialog::buildUi()
     auto *outputLayout = new QFormLayout(outputBox);
 
     QCheckBox *noSuffixCheck = nullptr;
-    if (m_mode == Mode::Convert) {
+    if (m_mode == Mode::Convert || m_mode == Mode::Resize) {
         m_useOriginalBaseName = new QCheckBox(tr("Use original base name (no suffix)"), outputBox);
         m_useOriginalBaseName->setChecked(false);
         noSuffixCheck = m_useOriginalBaseName;
@@ -90,6 +92,13 @@ void ImageConverterDialog::buildUi()
         noSuffixCheck = m_overwriteOriginal;
     }
     outputLayout->addRow(noSuffixCheck);
+
+    if (m_mode == Mode::Resize) {
+        m_overwriteHint = new QLabel(tr("Original files will be replaced."), outputBox);
+        m_overwriteHint->setWordWrap(true);
+        m_overwriteHint->setVisible(false);
+        outputLayout->addRow(m_overwriteHint);
+    }
 
     m_suffix = new QLineEdit(outputBox);
     switch (m_mode) {
@@ -110,7 +119,7 @@ void ImageConverterDialog::buildUi()
         m_suffix->setEnabled(!checked);
     });
 
-    if (m_mode == Mode::Convert) {
+    if (m_mode == Mode::Convert || m_mode == Mode::Resize) {
         m_sameOutputFolder = new QCheckBox(tr("Same folder as source"), outputBox);
         m_sameOutputFolder->setChecked(true);
         outputLayout->addRow(m_sameOutputFolder);
@@ -136,6 +145,14 @@ void ImageConverterDialog::buildUi()
                     m_outputDirectory->setEnabled(!sameFolder);
                     browseButton->setEnabled(!sameFolder);
                 });
+
+        if (m_mode == Mode::Resize && m_useOriginalBaseName) {
+            connect(m_useOriginalBaseName, &QCheckBox::toggled,
+                    this, &ImageConverterDialog::updateOverwriteHint);
+            connect(m_sameOutputFolder, &QCheckBox::toggled,
+                    this, &ImageConverterDialog::updateOverwriteHint);
+            updateOverwriteHint();
+        }
 
         connect(browseButton, &QPushButton::clicked, this, [this]() {
             QString startDirectory;
@@ -316,7 +333,7 @@ void ImageConverterDialog::updateUiForFormat()
 
 bool ImageConverterDialog::outputUsesNoSuffix() const
 {
-    if (m_mode == Mode::Convert)
+    if (m_mode == Mode::Convert || m_mode == Mode::Resize)
         return m_useOriginalBaseName && m_useOriginalBaseName->isChecked();
     return m_overwriteOriginal && m_overwriteOriginal->isChecked();
 }
@@ -325,15 +342,13 @@ QString ImageConverterDialog::outputPath(const QString &input, const QString &ex
 {
     const QFileInfo info(input);
 
-    if (m_mode != Mode::Convert && outputUsesNoSuffix() && extension.isEmpty())
-        return input;
-
     const QString targetExtension = extension.isEmpty() ? info.suffix() : extension;
     const QString suffix = outputUsesNoSuffix() ? QString() : m_suffix->text();
     const QString basename = info.completeBaseName() + suffix;
 
     QDir targetDirectory = info.dir();
-    if (m_mode == Mode::Convert && m_sameOutputFolder && !m_sameOutputFolder->isChecked()
+    if ((m_mode == Mode::Convert || m_mode == Mode::Resize)
+        && m_sameOutputFolder && !m_sameOutputFolder->isChecked()
         && m_outputDirectory && !m_outputDirectory->text().isEmpty()) {
         targetDirectory = QDir(m_outputDirectory->text());
     }
@@ -424,6 +439,169 @@ QStringList ImageConverterDialog::buildArguments(const QString &input, const QSt
     }
 
     return args;
+}
+
+void ImageConverterDialog::updateOverwriteHint()
+{
+    if (!m_overwriteHint)
+        return;
+
+    const bool replacesOriginals = m_mode == Mode::Resize
+        && m_useOriginalBaseName && m_useOriginalBaseName->isChecked()
+        && m_sameOutputFolder && m_sameOutputFolder->isChecked();
+    m_overwriteHint->setVisible(replacesOriginals);
+}
+
+void ImageConverterDialog::loadSettings()
+{
+    QSettings settings;
+
+    const int maximumJobs = m_parallelJobs ? m_parallelJobs->maximum() : 1;
+    if (m_parallelJobs) {
+        const int savedJobs = settings.value(QStringLiteral("processing/parallelJobs"),
+                                             qMin(4, maximumJobs)).toInt();
+        m_parallelJobs->setValue(qBound(1, savedJobs, maximumJobs));
+    }
+
+    if (m_mode == Mode::Resize) {
+        m_lastWidth = qMax(1, settings.value(QStringLiteral("resize/width"), 1920).toInt());
+        m_lastHeight = qMax(1, settings.value(QStringLiteral("resize/height"), 1080).toInt());
+
+        if (m_width)
+            m_width->setValue(m_lastWidth);
+        if (m_height)
+            m_height->setValue(m_lastHeight);
+        if (m_resizeMode) {
+            const QString mode = settings.value(QStringLiteral("resize/mode"),
+                                                QStringLiteral("width")).toString();
+            const int index = m_resizeMode->findData(mode);
+            if (index >= 0)
+                m_resizeMode->setCurrentIndex(index);
+        }
+        if (m_onlyShrink)
+            m_onlyShrink->setChecked(settings.value(QStringLiteral("resize/onlyShrink"), true).toBool());
+        if (m_suffix)
+            m_suffix->setText(settings.value(QStringLiteral("resize/suffix"),
+                                             QStringLiteral("_resized")).toString());
+        if (m_useOriginalBaseName) {
+            const bool noSuffix = settings.value(QStringLiteral("resize/useOriginalBaseName"), false).toBool();
+            m_useOriginalBaseName->setChecked(noSuffix);
+            if (m_suffix)
+                m_suffix->setEnabled(!noSuffix);
+        }
+        updateUiForResizeMode();
+    } else if (m_mode == Mode::Convert) {
+        if (m_format) {
+            const QString format = settings.value(QStringLiteral("convert/format"),
+                                                  QStringLiteral("webp")).toString();
+            const int index = m_format->findData(format);
+            if (index >= 0)
+                m_format->setCurrentIndex(index);
+        }
+        if (m_quality)
+            m_quality->setValue(qBound(1, settings.value(QStringLiteral("convert/quality"), 85).toInt(), 100));
+        if (m_stripMetadata)
+            m_stripMetadata->setChecked(settings.value(QStringLiteral("convert/removeMetadata"), false).toBool());
+        if (m_useOriginalBaseName) {
+            const bool noSuffix = settings.value(QStringLiteral("convert/useOriginalBaseName"), false).toBool();
+            m_useOriginalBaseName->setChecked(noSuffix);
+            if (m_suffix)
+                m_suffix->setEnabled(!noSuffix);
+        }
+        if (m_suffix)
+            m_suffix->setText(settings.value(QStringLiteral("convert/suffix"),
+                                             QStringLiteral("_converted")).toString());
+        updateUiForFormat();
+    } else {
+        if (m_suffix)
+            m_suffix->setText(settings.value(QStringLiteral("rotate/suffix"),
+                                             QStringLiteral("_rotated")).toString());
+        if (m_overwriteOriginal) {
+            const bool overwrite = settings.value(QStringLiteral("rotate/overwriteOriginal"), false).toBool();
+            m_overwriteOriginal->setChecked(overwrite);
+            if (m_suffix)
+                m_suffix->setEnabled(!overwrite);
+        }
+    }
+
+    if ((m_mode == Mode::Resize || m_mode == Mode::Convert)
+        && m_sameOutputFolder && m_outputDirectory) {
+        const QString prefix = m_mode == Mode::Resize ? QStringLiteral("resize/")
+                                                      : QStringLiteral("convert/");
+        const QString rawDirectory = settings.value(
+            prefix + QStringLiteral("outputDirectory")).toString();
+        const QString savedDirectory = rawDirectory.isEmpty()
+                                     ? QString()
+                                     : QDir::cleanPath(rawDirectory);
+        const bool directoryValid = !savedDirectory.isEmpty()
+                                 && QFileInfo(savedDirectory).isDir();
+        const bool useSourceFolder = settings.value(prefix + QStringLiteral("sameOutputFolder"), true).toBool();
+
+        if (directoryValid)
+            m_outputDirectory->setText(savedDirectory);
+        else
+            m_outputDirectory->clear();
+
+        // A remembered custom destination that no longer exists must not make
+        // the next invocation fail unexpectedly. Fall back to the source folder.
+        m_sameOutputFolder->setChecked(useSourceFolder || !directoryValid);
+    }
+}
+
+void ImageConverterDialog::saveSettings() const
+{
+    QSettings settings;
+
+    if (m_parallelJobs) {
+        const QString key = QStringLiteral("processing/parallelJobs");
+        const int savedPreference = qMax(1, settings.value(key, 4).toInt());
+        const int displayedFromSaved = qBound(1, savedPreference, m_parallelJobs->maximum());
+
+        // A small current selection temporarily lowers the spin-box maximum.
+        // Do not persist that clamp as the user's new preference. If the user
+        // actually changes the displayed value, store the explicit choice.
+        if (m_parallelJobs->value() != displayedFromSaved)
+            settings.setValue(key, m_parallelJobs->value());
+    }
+
+    if (m_mode == Mode::Resize) {
+        if (m_resizeMode)
+            settings.setValue(QStringLiteral("resize/mode"), m_resizeMode->currentData().toString());
+        settings.setValue(QStringLiteral("resize/width"), m_lastWidth);
+        settings.setValue(QStringLiteral("resize/height"), m_lastHeight);
+        if (m_onlyShrink)
+            settings.setValue(QStringLiteral("resize/onlyShrink"), m_onlyShrink->isChecked());
+        if (m_suffix)
+            settings.setValue(QStringLiteral("resize/suffix"), m_suffix->text());
+        if (m_useOriginalBaseName)
+            settings.setValue(QStringLiteral("resize/useOriginalBaseName"), m_useOriginalBaseName->isChecked());
+        if (m_sameOutputFolder)
+            settings.setValue(QStringLiteral("resize/sameOutputFolder"), m_sameOutputFolder->isChecked());
+        if (m_outputDirectory && !m_outputDirectory->text().isEmpty())
+            settings.setValue(QStringLiteral("resize/outputDirectory"), m_outputDirectory->text());
+    } else if (m_mode == Mode::Convert) {
+        if (m_format)
+            settings.setValue(QStringLiteral("convert/format"), m_format->currentData().toString());
+        if (m_quality)
+            settings.setValue(QStringLiteral("convert/quality"), m_quality->value());
+        if (m_stripMetadata)
+            settings.setValue(QStringLiteral("convert/removeMetadata"), m_stripMetadata->isChecked());
+        if (m_useOriginalBaseName)
+            settings.setValue(QStringLiteral("convert/useOriginalBaseName"), m_useOriginalBaseName->isChecked());
+        if (m_suffix)
+            settings.setValue(QStringLiteral("convert/suffix"), m_suffix->text());
+        if (m_sameOutputFolder)
+            settings.setValue(QStringLiteral("convert/sameOutputFolder"), m_sameOutputFolder->isChecked());
+        if (m_outputDirectory && !m_outputDirectory->text().isEmpty())
+            settings.setValue(QStringLiteral("convert/outputDirectory"), m_outputDirectory->text());
+    } else {
+        if (m_suffix)
+            settings.setValue(QStringLiteral("rotate/suffix"), m_suffix->text());
+        if (m_overwriteOriginal)
+            settings.setValue(QStringLiteral("rotate/overwriteOriginal"), m_overwriteOriginal->isChecked());
+    }
+
+    settings.sync();
 }
 
 static QString resolvedCommitPath(const QString &requestedOutput)
@@ -561,7 +739,8 @@ void ImageConverterDialog::processImages()
         }
     }
 
-    if (m_mode == Mode::Convert && m_sameOutputFolder && !m_sameOutputFolder->isChecked()) {
+    if ((m_mode == Mode::Convert || m_mode == Mode::Resize)
+        && m_sameOutputFolder && !m_sameOutputFolder->isChecked()) {
         if (!m_outputDirectory || m_outputDirectory->text().isEmpty()) {
             QMessageBox::warning(this, tr("Output folder required"),
                                  tr("Choose an output folder or enable 'Same folder as source'."));
@@ -709,6 +888,9 @@ void ImageConverterDialog::processImages()
         if (answer != QMessageBox::Ok)
             return;
     }
+
+    // Persist only settings from a batch that passed validation and user confirmations.
+    saveSettings();
 
     QString label;
     switch (m_mode) {

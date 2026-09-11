@@ -39,6 +39,9 @@ private:
     void buildResizeOptions();
     void buildRotateOptions();
     void buildConvertOptions();
+    void loadSettings();
+    void saveSettings() const;
+    void updateOverwriteHint();
 
     Mode m_mode;
     QStringList m_files;
@@ -58,6 +61,7 @@ private:
     QLineEdit *m_outputDirectory = nullptr;
     QLabel *m_qualityLabel = nullptr;
     QLabel *m_resizeHint = nullptr;
+    QLabel *m_overwriteHint = nullptr;
     int m_lastWidth = 1920;
     int m_lastHeight = 1080;
     bool m_updatingResizeUi = false;

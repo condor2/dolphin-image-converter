@@ -32,6 +32,7 @@ static QStringList localFilesFromArguments(const QStringList &arguments)
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    QApplication::setOrganizationName(QStringLiteral("DolphinImageConverter"));
     QApplication::setApplicationName(QStringLiteral("dolphin-image-converter"));
     QApplication::setApplicationVersion(QStringLiteral(APP_VERSION));
 

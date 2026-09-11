@@ -1,4 +1,4 @@
-# Dolphin Image Converter 0.2.3
+# Dolphin Image Converter 0.3.3
 
 Batch image tools for KDE Dolphin, powered by Qt 6 and ImageMagick.
 
@@ -10,11 +10,12 @@ Batch image tools for KDE Dolphin, powered by Qt 6 and ImageMagick.
 - Resize by width, by height, or inside a width × height box while preserving aspect ratio.
 - Rotate 90° left or right.
 - Convert to WebP, AVIF, JPEG, or PNG.
-- Select a separate output folder for conversion.
+- Select a separate output folder for Resize or Convert.
 - Optional metadata removal.
 - JPEG conversion flattens transparency onto white instead of black.
 - Conversion applies EXIF Orientation before metadata can be removed.
 - Animated GIF / multi-page TIFF to JPEG or PNG uses the first frame/page only.
+- Remembers commonly used Resize, Convert, output-folder, suffix, and parallel-job settings between invocations.
 - Batch processing with configurable parallel ImageMagick workers.
 - ImageMagick internal threading is limited when several workers are active.
 - Atomic output staging: ImageMagick writes to a hidden temporary file in the destination directory and the final path is replaced only after a successful conversion.
@@ -141,11 +142,17 @@ CMake compiles and embeds it under `:/i18n`. The application follows `QLocale::s
 
 The project translates its own application strings. Standard Qt labels such as OK, Cancel, and Show Details are translated only when the corresponding Qt/platform translation catalog is installed.
 
+## Persistent settings
+
+The application remembers the last commonly used settings through Qt `QSettings`, including Resize mode and dimensions, Convert format and quality, suffix choices, output folders, metadata-removal choice, and the parallel-job count. The settings namespace is application-specific (`DolphinImageConverter/dolphin-image-converter`) and contains no personal or company identifiers.
+
+Resize and Convert can both use either the source folder or a remembered custom output folder. If a saved custom folder no longer exists, the next invocation safely falls back to the source folder.
+
+Canceling or closing an options dialog does not save changes. If the current selection contains fewer files than the remembered parallel-job preference, the spin box is temporarily clamped without overwriting that remembered preference.
+
 ## Current limitations
 
 - Rotation still re-encodes JPEG through ImageMagick; lossless JPEG rotation with `jpegtran`/`exiftran` is not implemented.
-- Settings are not persisted between invocations yet.
-- A separate output folder is available for Convert, not yet for Resize.
 - The application is exposed through Dolphin and is not installed as a standalone desktop launcher.
 
 ## License

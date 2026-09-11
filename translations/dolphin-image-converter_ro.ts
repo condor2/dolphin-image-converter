@@ -410,6 +410,10 @@ Install the required encoder/delegate or choose a different output format.</sour
 
 Instalează encoderul/delegatul necesar sau alege alt format de ieșire.</translation>
     </message>
+    <message>
+      <source>Original files will be replaced.</source>
+      <translation>Fișierele originale vor fi înlocuite.</translation>
+    </message>
   </context>
   <context>
     <name>ImageMagickRunner</name>
