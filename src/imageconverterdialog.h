@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
 #include <QDialog>
@@ -8,6 +9,7 @@ class QComboBox;
 class QLineEdit;
 class QSpinBox;
 class QLabel;
+class ImageMagickRunner;
 
 class ImageConverterDialog : public QDialog
 {
@@ -30,7 +32,8 @@ private slots:
 
 private:
     QString outputPath(const QString &input, const QString &extension = {}) const;
-    QStringList buildArguments(const QString &input) const;
+    bool outputUsesNoSuffix() const;
+    QStringList buildArguments(const QString &input, const QString &output) const;
     void buildUi();
     void buildResizeOptions();
     void buildRotateOptions();
@@ -44,13 +47,18 @@ private:
     QSpinBox *m_height = nullptr;
     QCheckBox *m_onlyShrink = nullptr;
     QSpinBox *m_quality = nullptr;
+    QSpinBox *m_parallelJobs = nullptr;
     QComboBox *m_format = nullptr;
     QCheckBox *m_stripMetadata = nullptr;
-    QCheckBox *m_overwrite = nullptr;
+    QCheckBox *m_overwriteOriginal = nullptr;
+    QCheckBox *m_useOriginalBaseName = nullptr;
     QLineEdit *m_suffix = nullptr;
+    QCheckBox *m_sameOutputFolder = nullptr;
+    QLineEdit *m_outputDirectory = nullptr;
     QLabel *m_qualityLabel = nullptr;
     QLabel *m_resizeHint = nullptr;
     int m_lastWidth = 1920;
     int m_lastHeight = 1080;
     bool m_updatingResizeUi = false;
+    ImageMagickRunner *m_runner = nullptr;
 };

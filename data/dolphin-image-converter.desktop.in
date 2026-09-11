@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[Desktop Entry]
+Name=Dolphin Image Converter
+Name[ro]=Dolphin Image Converter
+Type=Service
+MimeType=image/jpeg;image/png;image/webp;image/avif;image/tiff;image/bmp;image/gif;image/heif;image/heic;
+Actions=resizeImages;rotateLeft;rotateRight;convertImages;
+X-KDE-Protocols=file
+X-KDE-Submenu=Image Tools
+X-KDE-Submenu[ro]=Instrumente imagini
+X-KDE-Priority=TopLevel
+
+[Desktop Action resizeImages]
+Name=Resize Images...
+Name[ro]=Redimensionează imaginile...
+Icon=transform-scale
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/dolphin-image-converter --resize %F
+
+[Desktop Action rotateLeft]
+Name=Rotate Left 90°
+Name[ro]=Rotește la stânga 90°
+Icon=object-rotate-left
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/dolphin-image-converter --rotate-left %F
+
+[Desktop Action rotateRight]
+Name=Rotate Right 90°
+Name[ro]=Rotește la dreapta 90°
+Icon=object-rotate-right
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/dolphin-image-converter --rotate-right %F
+
+[Desktop Action convertImages]
+Name=Convert Images...
+Name[ro]=Convertește imaginile...
+Icon=image-x-generic
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/dolphin-image-converter --convert %F

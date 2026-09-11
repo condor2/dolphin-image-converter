@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "imageconverterdialog.h"
 
 #include <QApplication>
@@ -5,6 +6,8 @@
 #include <QCommandLineParser>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QLocale>
+#include <QTranslator>
 #include <QUrl>
 
 static QStringList localFilesFromArguments(const QStringList &arguments)
@@ -29,8 +32,30 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("dolphin-image-converter"));
-    QApplication::setApplicationDisplayName(QObject::tr("Dolphin Image Converter"));
     QApplication::setApplicationVersion(QStringLiteral(APP_VERSION));
+
+    QTranslator translator;
+    bool translationLoaded = false;
+
+    // LANGUAGE may override the desktop UI language to override the UI language without
+    // changing LANG. Try its first preference explicitly, then the system locale.
+    const QString languageOverride = qEnvironmentVariable("LANGUAGE").section(QLatin1Char(':'), 0, 0);
+    if (!languageOverride.isEmpty()) {
+        translationLoaded = translator.load(QLocale(languageOverride),
+                                            QStringLiteral("dolphin-image-converter"),
+                                            QStringLiteral("_"),
+                                            QStringLiteral(":/i18n"));
+    }
+    if (!translationLoaded) {
+        translationLoaded = translator.load(QLocale::system(),
+                                            QStringLiteral("dolphin-image-converter"),
+                                            QStringLiteral("_"),
+                                            QStringLiteral(":/i18n"));
+    }
+    if (translationLoaded)
+        app.installTranslator(&translator);
+
+    QApplication::setApplicationDisplayName(QObject::tr("Dolphin Image Converter"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QObject::tr("Batch image tools for KDE Dolphin"));
